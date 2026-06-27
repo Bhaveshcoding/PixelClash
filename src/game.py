@@ -37,6 +37,7 @@ class Game:
 
         # Continuous Input Polling for Shooting (Left Click)
         mouse_buttons = pygame.mouse.get_pressed()
+# sourcery skip: merge-nested-ifs
         if mouse_buttons[0]: # Left Mouse Button Down
             if self.player.can_shoot():
                 new_bullet = self.player.shoot()
