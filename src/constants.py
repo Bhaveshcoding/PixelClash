@@ -8,21 +8,16 @@ TITLE = "Pixel Clash"
 BACKGROUND_COLOR = (30, 30, 30)   
 WALL_COLOR = (70, 75, 90)         
 PLAYER_COLOR = (0, 200, 255)      
-DUMMY_COLOR = (255, 100, 100)     # Red for target dummy
+DUMMY_COLOR = (255, 100, 100)     
 BULLET_COLOR = (255, 215, 0)      
 CROSSHAIR_COLOR = (255, 80, 80)   
-UI_COLOR = (255, 255, 255)        # White text
+UI_COLOR = (255, 255, 255)        
 
 # Player Specifications
 PLAYER_SIZE = 40
 PLAYER_SPEED = 400
 MAX_HEALTH = 100
 BULLET_DAMAGE = 20
-
-# Dash Tuning
-DASH_SPEED_MULTIPLIER = 3.0       # Dynamic burst acceleration
-DASH_DURATION = 0.15              # How long the speed burst lasts (seconds)
-DASH_COOLDOWN = 3.0               # Recovery time between dashes
 
 # Weapon Tuning Configuration
 FIRE_COOLDOWN = 0.2               
