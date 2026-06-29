@@ -4,30 +4,42 @@ from constants import WIDTH, HEIGHT, BACKGROUND_COLOR, UI_COLOR
 class MenuSystem:
     def __init__(self, screen):
         self.screen = screen
-        self.font_title = pygame.font.SysFont(None, 80)
-        self.font_btn = pygame.font.SysFont(None, 48)
-        self.font_sm = pygame.font.SysFont(None, 32)
+        self.font_title = pygame.font.SysFont("Impact", 80)
+        self.font_btn = pygame.font.SysFont("Arial", 28, bold=True)
+        self.font_sm = pygame.font.SysFont("Arial", 22, bold=True)
         
-        # Connection Variables
+        # Connection Paths
         self.ip_input_text = "127.0.0.1"
         self.input_active = False
         
-        # New Settings Variables
+        # Menu Selection Settings Configuration Profiles
         self.music_volume = 0.5
         self.sfx_volume = 0.5
         self.is_fullscreen = False
         self.show_fps = True
+        
+        # Single-Click Event Tracking Triggers
+        self.mouse_was_pressed = False
+        self.click_registered = False
+
+    def update_clicks(self):
+        """Processes an event-driven click edge toggle check to isolate input ticks."""
+        current_click = pygame.mouse.get_pressed()[0]
+        if current_click and not self.mouse_was_pressed:
+            self.click_registered = True
+        else:
+            self.click_registered = False
+        self.mouse_was_pressed = current_click
 
     def draw_main_menu(self) -> str:
-        """Renders main screen elements and returns interaction commands."""
+        self.update_clicks()
         self.screen.fill(BACKGROUND_COLOR)
         t_surf = self.font_title.render("PIXEL CLASH", True, (0, 200, 255))
         self.screen.blit(t_surf, (WIDTH//2 - t_surf.get_width()//2, 100))
 
-        # Build Button Boxes
         btn_host = pygame.Rect(WIDTH//2 - 150, 240, 300, 50)
         btn_join = pygame.Rect(WIDTH//2 - 150, 320, 300, 50)
-        btn_sett = pygame.Rect(WIDTH//2 - 150, 400, 300, 50) # New settings button
+        btn_sett = pygame.Rect(WIDTH//2 - 150, 400, 300, 50) 
         btn_quit = pygame.Rect(WIDTH//2 - 150, 480, 300, 50)
 
         m_pos = pygame.mouse.get_pos()
@@ -39,8 +51,7 @@ class MenuSystem:
             txt = self.font_btn.render(text, True, UI_COLOR)
             self.screen.blit(txt, (r.centerx - txt.get_width()//2, r.centery - txt.get_height()//2))
 
-        if pygame.mouse.get_pressed()[0]:
-            pygame.time.delay(150)
+        if self.click_registered:
             if btn_host.collidepoint(m_pos): return "HOST"
             if btn_join.collidepoint(m_pos): return "JOIN_SCREEN"
             if btn_sett.collidepoint(m_pos): return "SETTINGS"
@@ -48,69 +59,70 @@ class MenuSystem:
         return "MAIN_MENU"
 
     def draw_settings_screen(self) -> str:
-        """Renders interactive settings panel for full controls configuration."""
+        """Renders settings menu using event-driven clicks to prevent multi-triggering bugs."""
+        self.update_clicks()
         self.screen.fill(BACKGROUND_COLOR)
         m_pos = pygame.mouse.get_pos()
-        m_click = pygame.mouse.get_pressed()[0]
+        m_hold = pygame.mouse.get_pressed()[0]
 
         lbl = self.font_title.render("SETTINGS", True, UI_COLOR)
         self.screen.blit(lbl, (WIDTH//2 - lbl.get_width()//2, 80))
 
-        # 1. Music Volume Slider UI
+        # 1. Music Volume Bar UI Layout (Polled smoothly on down-hold)
         m_lbl = self.font_sm.render(f"Music Volume: {int(self.music_volume * 100)}%", True, UI_COLOR)
-        self.screen.blit(m_lbl, (WIDTH//2 - 200, 200))
-        m_slider = pygame.Rect(WIDTH//2 - 200, 230, 400, 10)
+        self.screen.blit(m_lbl, (WIDTH//2 - 200, 180))
+        m_slider = pygame.Rect(WIDTH//2 - 200, 210, 400, 10)
         pygame.draw.rect(self.screen, (60, 60, 70), m_slider)
-        if m_click and m_slider.inflate(0, 20).collidepoint(m_pos):
+        if m_hold and m_slider.inflate(0, 20).collidepoint(m_pos):
             self.music_volume = max(0.0, min(1.0, (m_pos[0] - m_slider.x) / m_slider.width))
         pygame.draw.circle(self.screen, (0, 200, 255), (int(m_slider.x + self.music_volume * m_slider.width), m_slider.centery), 10)
 
-        # 2. SFX Volume Slider UI
+        # 2. SFX Volume Bar UI Layout (Polled smoothly on down-hold)
         s_lbl = self.font_sm.render(f"SFX Volume: {int(self.sfx_volume * 100)}%", True, UI_COLOR)
-        self.screen.blit(s_lbl, (WIDTH//2 - 200, 270))
-        s_slider = pygame.Rect(WIDTH//2 - 200, 300, 400, 10)
+        self.screen.blit(s_lbl, (WIDTH//2 - 200, 250))
+        s_slider = pygame.Rect(WIDTH//2 - 200, 280, 400, 10)
         pygame.draw.rect(self.screen, (60, 60, 70), s_slider)
-        if m_click and s_slider.inflate(0, 20).collidepoint(m_pos):
+        if m_hold and s_slider.inflate(0, 20).collidepoint(m_pos):
             self.sfx_volume = max(0.0, min(1.0, (m_pos[0] - s_slider.x) / s_slider.width))
         pygame.draw.circle(self.screen, (0, 200, 255), (int(s_slider.x + self.sfx_volume * s_slider.width), s_slider.centery), 10)
 
-        # 3. Fullscreen Checkbox UI
+        # 3. Fullscreen Checkbox UI Layout (Fires cleanly on click edge)
         fs_lbl = self.font_sm.render("Fullscreen Mode", True, UI_COLOR)
-        self.screen.blit(fs_lbl, (WIDTH//2 - 200, 350))
-        fs_box = pygame.Rect(WIDTH//2 + 100, 350, 25, 25)
+        self.screen.blit(fs_lbl, (WIDTH//2 - 200, 330))
+        fs_box = pygame.Rect(WIDTH//2 + 100, 330, 25, 25)
         pygame.draw.rect(self.screen, (50, 50, 60), fs_box, border_radius=4)
         if self.is_fullscreen:
             pygame.draw.rect(self.screen, (0, 200, 255), fs_box.inflate(-6, -6), border_radius=2)
-        if m_click and fs_box.collidepoint(m_pos):
-            pygame.time.delay(150)
-            self.is_fullscreen = not self.is_fullscreen
-            return "TOGGLE_FULLSCREEN"
 
-        # 4. FPS Display Checkbox UI
+        # 4. Show FPS Checkbox UI Layout (Fires cleanly on click edge)
         fps_lbl = self.font_sm.render("Show FPS Counter", True, UI_COLOR)
-        self.screen.blit(fps_lbl, (WIDTH//2 - 200, 400))
-        fps_box = pygame.Rect(WIDTH//2 + 100, 400, 25, 25)
+        self.screen.blit(fps_lbl, (WIDTH//2 - 200, 380))
+        fps_box = pygame.Rect(WIDTH//2 + 100, 380, 25, 25)
         pygame.draw.rect(self.screen, (50, 50, 60), fps_box, border_radius=4)
         if self.show_fps:
             pygame.draw.rect(self.screen, (0, 200, 255), fps_box.inflate(-6, -6), border_radius=2)
-        if m_click and fps_box.collidepoint(m_pos):
-            pygame.time.delay(150)
-            self.show_fps = not self.show_fps
 
-        # Back Button
-        btn_back = pygame.Rect(WIDTH//2 - 150, 480, 300, 50)
+        # 5. Back Navigation Button
+        btn_back = pygame.Rect(WIDTH//2 - 150, 460, 300, 50)
         c = (100, 100, 120) if btn_back.collidepoint(m_pos) else (50, 50, 60)
         pygame.draw.rect(self.screen, c, btn_back, border_radius=8)
         t = self.font_btn.render("BACK", True, UI_COLOR)
         self.screen.blit(t, (btn_back.centerx - t.get_width()//2, btn_back.centery - t.get_height()//2))
 
-        if m_click and btn_back.collidepoint(m_pos):
-            pygame.time.delay(150)
-            return "MAIN_MENU"
+        # Handle Click Edge Processing Actions
+        if self.click_registered:
+            if fs_box.collidepoint(m_pos):
+                self.is_fullscreen = not self.is_fullscreen
+                return "TOGGLE_FULLSCREEN"
+            if fps_box.collidepoint(m_pos):
+                self.show_fps = not self.show_fps
+            if btn_back.collidepoint(m_pos):
+                return "MAIN_MENU"
 
         return "SETTINGS"
 
     def draw_join_screen(self) -> tuple:
+        self.update_clicks()
         self.screen.fill(BACKGROUND_COLOR)
         lbl = self.font_title.render("ENTER HOST IP", True, UI_COLOR)
         self.screen.blit(lbl, (WIDTH//2 - lbl.get_width()//2, 150))
@@ -133,8 +145,7 @@ class MenuSystem:
             t = self.font_btn.render(text, True, UI_COLOR)
             self.screen.blit(t, (r.centerx - t.get_width()//2, r.centery - t.get_height()//2))
 
-        if pygame.mouse.get_pressed()[0]:
-            pygame.time.delay(150)
+        if self.click_registered:
             if input_box.collidepoint(m_pos):
                 self.input_active = True
             else:

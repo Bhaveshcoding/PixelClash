@@ -2,6 +2,7 @@ import sys
 import pygame
 import random
 import math
+from assets import assets
 from constants import (
     WIDTH, HEIGHT, FPS, TITLE, BACKGROUND_COLOR, WALL_LAYOUTS,
     CROSSHAIR_COLOR, UI_COLOR, PLAYER_SIZE, BULLET_SIZE, CRATE_COLOR,
@@ -15,7 +16,13 @@ from menu import MenuSystem
 class Game:
     def __init__(self):
         pygame.init()
-        pygame.mixer.init() 
+        try:
+            pygame.mixer.init()
+            self.audio_available = True
+        except pygame.error:
+            print("[AUDIO WARN] No audio devices available. Sound features disabled.")
+            self.audio_available = False
+            
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption(TITLE)
         self.clock = pygame.time.Clock()
@@ -24,21 +31,16 @@ class Game:
         self.state_string = "MAIN_MENU"
         self.menu_manager = MenuSystem(self.screen)
         
-        self.ui_font = pygame.font.SysFont("Arial", 18, bold=True)
-        self.hud_font = pygame.font.SysFont("Impact", 28)
-        self.win_font = pygame.font.SysFont("Impact", 72)
+        self.ui_font = assets.get_font(18, "Arial", True)
+        self.hud_font = assets.get_font(28, "Impact")
+        self.win_font = assets.get_font(72, "Impact")
         
-        self.walls = [Wall(w[0], w[1], w[2], w[3]) for w in WALL_LAYOUTS]
+        self.walls = [Wall(*w) for w in WALL_LAYOUTS]
         self.network = None
         self.player = None
         
-        self.my_surf = pygame.Surface((PLAYER_SIZE, PLAYER_SIZE), pygame.SRCALPHA)
-        pygame.draw.rect(self.my_surf, (0, 180, 255), (0, 0, PLAYER_SIZE, PLAYER_SIZE), border_radius=6)
-        pygame.draw.rect(self.my_surf, (30, 30, 30), (PLAYER_SIZE - 12, (PLAYER_SIZE // 2) - 4, 12, 8))
-
-        self.enemy_surf = pygame.Surface((PLAYER_SIZE, PLAYER_SIZE), pygame.SRCALPHA)
-        pygame.draw.rect(self.enemy_surf, (255, 80, 80), (0, 0, PLAYER_SIZE, PLAYER_SIZE), border_radius=6)
-        pygame.draw.rect(self.enemy_surf, (60, 10, 10), (PLAYER_SIZE - 12, (PLAYER_SIZE // 2) - 4, 12, 8))
+        self.my_surf = assets.get_image("player_blue")
+        self.enemy_surf = assets.get_image("player_red")
 
         self.shake_timer = 0.0
         self.shake_intensity = 0
@@ -54,38 +56,18 @@ class Game:
         self.server_kill_feed = []
         self.winner = ""
 
-        self.init_procedural_audio()
+    def play_sound(self, action):
 
-    def init_procedural_audio(self):
-        """Generates a hardware-compatible laser sound effects buffer using raw bytes."""
-        try:
-            # Create a 0.1-second square wave sound effect using pure bytes
-            sample_rate = 22050
-            duration = 0.1
-            total_samples = int(sample_rate * duration)
-            
-            raw_bytes = bytearray()
-            for i in range(total_samples):
-                # Procedural frequency sweep tone arithmetic loop 
-                frequency = 800 - (i * 4) 
-                wave_step = int(i * (frequency / sample_rate) * 2) % 2
-                amplitude = 127 if wave_step == 1 else -127
-                
-                # Pack signed 8-bit integers cleanly into the byte stream array
-                raw_bytes.append(amplitude & 0xFF)
-            
-            # Mount byte array directly into a raw 8-bit sound object channel
-            self.shoot_sound = pygame.mixer.Sound(buffer=bytes(raw_bytes))
-            self.shoot_sound.set_volume(0.5)
-        except Exception as e:
-            print(f"[AUDIO WARN] Procedural sound card generation bypassed: {e}")
-            self.shoot_sound = None
+        if not self.audio_available:
+            return
 
+        if action == "shoot":
 
-    def play_sound(self, action: str):
-        if action == "shoot" and self.shoot_sound:
-            self.shoot_sound.set_volume(self.menu_manager.sfx_volume)
-            self.shoot_sound.play()
+            shoot = assets.get_sound("shoot")
+
+            if shoot:
+                shoot.set_volume(self.menu_manager.sfx_volume)
+                shoot.play()
     def spawn_particles(self, x, y, color, count=8, p_type="spark", size_range=(2, 5), life_range=(0.2, 0.5)):
         for _ in range(count):
             angle = random.uniform(0, math.pi * 2)
@@ -95,11 +77,13 @@ class Game:
             max_life = random.uniform(min_l, max_l)
             
             min_s, max_s = size_range[0], size_range[1]
+            size = random.randint(min_s, max_s)
+            
             self.particles.append({
                 "x": float(x), "y": float(y),
                 "vx": math.cos(angle) * speed, "vy": math.sin(angle) * speed,
                 "color": color, "life": max_life, "max_life": max_life,
-                "size": random.randint(min_s, max_s), "type": p_type
+                "size": size, "type": p_type
             })
 
     def trigger_camera_shake(self, duration=0.15, intensity=6):
@@ -149,6 +133,7 @@ class Game:
                     self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
                 else:
                     self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+                self.menu_manager.screen = self.screen
             return
 
         if self.state_string != "GAMEPLAY": return
@@ -163,6 +148,11 @@ class Game:
             p["x"] += p["vx"] * dt
             p["y"] += p["vy"] * dt
             if p["life"] <= 0: self.particles.remove(p)
+
+        if not self.network or self.network.p_id == -1:
+            self.state_string = "MAIN_MENU"
+            pygame.mouse.set_visible(True)
+            return
 
         me_s = self.server_players.get(self.network.p_id, {"active_buff": "none", "health": 100, "kills": 0})
         old_kills = me_s.get("kills", 0)
@@ -201,38 +191,43 @@ class Game:
             packet["reset_match"] = True
 
         reply = self.network.send_and_receive(packet)
-        if reply:
-            old_feed = self.server_kill_feed
-            old_bullets_count = len(self.server_bullets)
-            old_crates_count = len(self.server_crates)
-            
-            self.server_players = reply.get("players", {})
-            self.server_bullets = reply.get("bullets", [])
-            self.server_grenades = reply.get("grenades", [])
-            self.server_pickups = reply.get("pickups", {})
-            self.server_crates = reply.get("crates", {})
-            self.server_kill_feed = reply.get("kill_feed", [])
-            self.winner = reply.get("winner", "")
-            
-            new_me = self.server_players.get(self.network.p_id, {"kills": 0, "health": 100})
-            if new_me.get("kills", 0) > old_kills or len(self.server_bullets) < old_bullets_count:
-                self.hit_marker_timer = 0.15 
+        
+        if not reply:
+            self.state_string = "MAIN_MENU"
+            pygame.mouse.set_visible(True)
+            return
 
-            if len(self.server_bullets) < old_bullets_count:
-                for _ in range(old_bullets_count - len(self.server_bullets)):
-                    self.spawn_particles(self.player.pos.x + random.randint(-50, 50), self.player.pos.y + random.randint(-50, 50), (230, 230, 200), count=5, size_range=(1, 3), life_range=(0.2, 0.4))
+        old_feed = self.server_kill_feed
+        old_bullets_count = len(self.server_bullets)
+        old_crates_count = len(self.server_crates)
+        
+        self.server_players = reply.get("players", {})
+        self.server_bullets = reply.get("bullets", [])
+        self.server_grenades = reply.get("grenades", [])
+        self.server_pickups = reply.get("pickups", {})
+        self.server_crates = reply.get("crates", {})
+        self.server_kill_feed = reply.get("kill_feed", [])
+        self.winner = reply.get("winner", "")
+        
+        new_me = self.server_players.get(self.network.p_id, {"kills": 0, "health": 100})
+        if new_me.get("kills", 0) > old_kills or len(self.server_bullets) < old_bullets_count:
+            self.hit_marker_timer = 0.15 
 
-            if len(self.server_crates) < old_crates_count:
-                self.trigger_camera_shake(0.2, 8)
-                self.spawn_particles(self.player.pos.x, self.player.pos.y, CRATE_COLOR, count=20, size_range=(3, 5), life_range=(0.3, 0.6))
+        if len(self.server_bullets) < old_bullets_count:
+            for _ in range(old_bullets_count - len(self.server_bullets)):
+                self.spawn_particles(self.player.pos.x + random.randint(-50, 50), self.player.pos.y + random.randint(-50, 50), (230, 230, 200), count=5, size_range=(1, 3), life_range=(0.2, 0.4))
 
-            if len(self.server_kill_feed) > len(old_feed):
-                self.trigger_camera_shake(0.3, 14)
-                self.spawn_particles(self.player.pos.x, self.player.pos.y, EXPLOSION_COLOR, count=25, size_range=(4, 7), life_range=(0.4, 0.8))
+        if len(self.server_crates) < old_crates_count:
+            self.trigger_camera_shake(0.2, 8)
+            self.spawn_particles(self.player.pos.x, self.player.pos.y, CRATE_COLOR, count=20, size_range=(3, 5), life_range=(0.3, 0.6))
 
-            if self.network.p_id in self.server_players and not self.server_players[self.network.p_id]["is_alive"]:
-                self.player.pos.x = self.server_players[self.network.p_id]["x"]
-                self.player.pos.y = self.server_players[self.network.p_id]["y"]
+        if len(self.server_kill_feed) > len(old_feed):
+            self.trigger_camera_shake(0.3, 14)
+            self.spawn_particles(self.player.pos.x, self.player.pos.y, EXPLOSION_COLOR, count=25, size_range=(4, 7), life_range=(0.4, 0.8))
+
+        if self.network.p_id in self.server_players and not self.server_players[self.network.p_id]["is_alive"]:
+            self.player.pos.x = self.server_players[self.network.p_id]["x"]
+            self.player.pos.y = self.server_players[self.network.p_id]["y"]
     def draw_world_entities(self, surface):
         for item in self.server_pickups.values():
             col = PICKUP_COLORS.get(item["type"], (255, 255, 255))
@@ -254,7 +249,8 @@ class Game:
         for p in self.particles:
             alpha = int(255 * (p["life"] / p["max_life"]))
             p_surf = pygame.Surface((p["size"]*2, p["size"]*2), pygame.SRCALPHA)
-            pygame.draw.circle(p_surf, (p["color"][0], p["color"][1], p["color"][2], alpha), (p["size"], p["size"]), p["size"])
+            r, g, b = p["color"][0], p["color"][1], p["color"][2]
+            pygame.draw.circle(p_surf, (r, g, b, alpha), (p["size"], p["size"]), p["size"])
             surface.blit(p_surf, (int(p["x"] - p["size"]), int(p["y"] - p["size"])))
 
         for pid, p in self.server_players.items():
@@ -289,8 +285,9 @@ class Game:
         hdr = self.ui_font.render("ARENA LEADERBOARD", True, (150, 160, 180))
         self.screen.blit(hdr, (WIDTH - panel_w, score_y + 8))
         
+        sorted_players = sorted(self.server_players.items(), key=lambda x: x[1]["kills"], reverse=True)
         item_y = score_y + 30
-        for pid, pl in self.server_players.items():
+        for pid, pl in sorted_players:
             lbl = "YOU" if int(pid) == self.network.p_id else f"PLAYER {pid}"
             lbl_col = (0, 200, 255) if int(pid) == self.network.p_id else UI_COLOR
             stxt = self.ui_font.render(f"{lbl.ljust(10)} {pl['kills']} K / {pl['deaths']} D", True, lbl_col)
@@ -358,6 +355,7 @@ class Game:
                     self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
                 else:
                     self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+                self.menu_manager.screen = self.screen
             pygame.display.flip()
             return
             

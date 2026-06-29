@@ -11,14 +11,13 @@ class Network:
 
     def connect(self) -> int:
         try:
-            self.client.settimeout(1.0) # <--- ADD THIS LINE (1 second timeout limit)
+            self.client.settimeout(1.0) 
             self.client.connect(self.addr)
             assigned_id = self.client.recv(1048).decode()
-            self.client.settimeout(None) # <--- ADD THIS LINE (Remove timeout for live gameplay)
+            self.client.settimeout(None) 
             return int(assigned_id)
         except Exception:
             return -1
-
 
     def send_and_receive(self, data: dict) -> dict:
         try:
@@ -27,5 +26,5 @@ class Network:
             if not raw_response:
                 return {}
             return pickle.loads(raw_response)
-        except socket.error:
+        except Exception: # 🟠 Runtime Issue #1 Fixed: Safe catch tracking for EOF / parsing errors
             return {}

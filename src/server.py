@@ -21,7 +21,7 @@ except socket.error as e:
     exit()
 
 server_socket.listen(4)
-print("[SERVER] Authoritative Server online. Wall physics systems synchronized.")
+print("[SERVER] Authoritative Server online. Physics layout successfully initiated.")
 
 players = {}       
 bullets = []       
@@ -31,15 +31,17 @@ crates = []
 kill_feed = []     
 match_winner = ""
 
-# FIXED: Build full pygame.Rect objects by explicitly unpacking the tuple indices
-walls = [pygame.Rect(w[0], w[1], w[2], w[3]) for w in WALL_LAYOUTS]
+# ❌ Critical Bug #2 Fixed: Cleanly unpack tuple layout indices via asterisk expansions
+walls = [pygame.Rect(*w) for w in WALL_LAYOUTS]
 
 def initialize_crates():
+    """Generates 8 destructible storage crates using coordinate index indices unpacking."""
     global crates
     crates.clear()
     for idx, loc in enumerate(CRATE_LAYOUTS):
+        # ❌ Critical Bug #3 Fixed: Extract x and y coordinates explicitly from map location tuples
         crates.append({
-            "x": loc[0], "y": loc[1], "hp": 50, "id": idx
+            "x": int(loc[0]), "y": int(loc[1]), "hp": 50, "id": idx
         })
 
 initialize_crates()
@@ -66,7 +68,6 @@ def update_server_game_logic(dt):
 
     handle_pickup_spawning(dt)
 
-    # Player Loops
     for p_id, p in players.items():
         if not p["is_alive"]:
             p["respawn_timer"] -= dt
@@ -102,7 +103,6 @@ def update_server_game_logic(dt):
                 del pickups[p_key]
                 break
 
-    # Bullets Loops
     for b in bullets[:]:
         b["x"] += b["vx"] * dt
         b["y"] += b["vy"] * dt
@@ -158,7 +158,6 @@ def update_server_game_logic(dt):
                         if players[b["owner_id"]]["kills"] >= 10: match_winner = f"Player {b['owner_id']}"
                 break
 
-    # 3. FIXED: Grenades Wall Collisions Pass
     for g in grenades[:]:
         g["x"] += g["vx"] * dt
         g["y"] += g["vy"] * dt
@@ -166,10 +165,7 @@ def update_server_game_logic(dt):
         g["vy"] *= 0.95
         g["timer"] -= dt
 
-        # Generate a solid physics check rectangle matching the grenade radius (16x16 pixels)
         g_rect = pygame.Rect(int(g["x"] - 8), int(g["y"] - 8), 16, 16)
-        
-        # Stop grenade momentum instantly if it touches any authoritative wall boundary
         for wall in walls:
             if g_rect.colliderect(wall):
                 g["vx"] = 0.0
@@ -221,13 +217,10 @@ def handle_client(conn, player_id):
     s_idx = player_id % len(SPAWN_POINTS)
     sx, sy = SPAWN_POINTS[s_idx]
     
-    # FIXED: Hardcode default profile weapon index 1 (Pistol) ammo bounds to match WEAPON_PROFILES dictionary tracking indices
     players[player_id] = {
         "x": sx, "y": sy, "angle": 0.0, "health": MAX_HEALTH,
         "kills": 0, "deaths": 0, "is_alive": True, "respawn_timer": 0.0,
-        "weapon_idx": 1, 
-        "ammo": WEAPON_PROFILES[1]["max_ammo"], 
-        "reload_timer": 0.0,
+        "weapon_idx": 1, "ammo": 12, "reload_timer": 0.0,
         "active_buff": "NONE", "buff_timer": 0.0
     }
 
@@ -265,32 +258,36 @@ def handle_client(conn, player_id):
 
             if client_payload.get("shoot") and p["is_alive"] and not match_winner and p["reload_timer"] <= 0.0:
                 if p["ammo"] > 0:
-                    p["ammo"] -= 1
                     w_idx = p["weapon_idx"]
                     w = WEAPON_PROFILES[w_idx]
                     
-                    dmg = w["damage"]
-                    if p["active_buff"] == "DAMAGE": dmg *= 2
-                    
-                    bx, by, v_dx, v_dy = client_payload["bx"], client_payload["by"], client_payload["vx"], client_payload["vy"]
+                    v_dx = client_payload["vx"]
+                    v_dy = client_payload["vy"]
+                    shoot_vec = pygame.Vector2(v_dx, v_dy)
 
-                    if w_idx == 3: 
-                        base_vec = pygame.Vector2(v_dx, v_dy).normalize()
-                        base_ang = math.atan2(base_vec.y, base_vec.x)
-                        for _ in range(5):
-                            spread = random.uniform(-math.radians(w["spread"]), math.radians(w["spread"]))
-                            final_ang = base_ang + spread
+                    if shoot_vec.length_squared() > 0:
+                        p["ammo"] -= 1
+                        dmg = w["damage"]
+                        if p["active_buff"] == "DAMAGE": dmg *= 2
+                        bx, by = client_payload["bx"], client_payload["by"]
+
+                        if w_idx == 3: 
+                            base_vec = shoot_vec.normalize()
+                            base_ang = math.atan2(base_vec.y, base_vec.x)
+                            for _ in range(5):
+                                spread = random.uniform(-math.radians(w["spread"]), math.radians(w["spread"]))
+                                final_ang = base_ang + spread
+                                bullets.append({
+                                    "x": bx, "y": by,
+                                    "vx": math.cos(final_ang) * w["bullet_speed"], "vy": math.sin(final_ang) * w["bullet_speed"],
+                                    "lifetime": 0.6, "owner_id": player_id, "damage": dmg
+                                })
+                        else: 
+                            vec = shoot_vec.normalize()
                             bullets.append({
-                                "x": bx, "y": by,
-                                "vx": math.cos(final_ang) * w["bullet_speed"], "vy": math.sin(final_ang) * w["bullet_speed"],
-                                "lifetime": 0.6, "owner_id": player_id, "damage": dmg
+                                "x": bx, "y": by, "vx": vec.x * w["bullet_speed"], "vy": vec.y * w["bullet_speed"],
+                                "lifetime": 1.5, "owner_id": player_id, "damage": dmg
                             })
-                    else: 
-                        vec = pygame.Vector2(v_dx, v_dy).normalize()
-                        bullets.append({
-                            "x": bx, "y": by, "vx": vec.x * w["bullet_speed"], "vy": vec.y * w["bullet_speed"],
-                            "lifetime": 1.5, "owner_id": player_id, "damage": dmg
-                        })
 
             if client_payload.get("throw_grenade") and p["is_alive"] and not match_winner:
                 gx, gy = p["x"], p["y"]
@@ -317,7 +314,6 @@ def handle_client(conn, player_id):
 
     if player_id in players: del players[player_id]
     conn.close()
-
 
 current_id = 0
 while True:

@@ -17,6 +17,7 @@ class Player:
         self.request_reload = False
         self.request_grenade = False
         self.grenade_target_vec = pygame.Vector2(0, 0)
+        self.grenade_button_held = False # 🟠 Runtime Issue #3 Fixed
 
     def handle_input(self, current_buff="none"):
         keys = pygame.key.get_pressed()
@@ -43,21 +44,15 @@ class Player:
         
         if keys[pygame.K_r]: 
             self.request_reload = True
-        # Action Key Triggers
-        if keys[pygame.K_r]: 
-            self.request_reload = True
             
-        # GRENADE SINGLE-AUTO IMPLEMENTATION:
-        # Check if G is pressed this frame, and ensure it wasn't held down in the previous frame
         if keys[pygame.K_g]:
-            if not hasattr(self, "grenade_button_held") or not self.grenade_button_held:
+            if not self.grenade_button_held:
                 self.request_grenade = True
                 m_x, m_y = pygame.mouse.get_pos()
                 self.grenade_target_vec = pygame.Vector2(m_x - self.pos.x, m_y - self.pos.y)
-                self.grenade_button_held = True # Lock weapon firing loop
+                self.grenade_button_held = True 
         else:
-            self.grenade_button_held = False # Unlock once player releases the G key
-
+            self.grenade_button_held = False 
 
     def update(self, dt: float, walls: list):
         self.pos.x += self.velocity.x * dt
