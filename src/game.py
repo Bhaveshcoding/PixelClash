@@ -2,7 +2,9 @@ import sys
 import pygame
 import random
 import math
+from replay import ReplayManager
 from assets import assets
+from camera import Camera
 from constants import (
     WIDTH, HEIGHT, FPS, TITLE, BACKGROUND_COLOR, WALL_LAYOUTS,
     CROSSHAIR_COLOR, UI_COLOR, PLAYER_SIZE, BULLET_SIZE, CRATE_COLOR,
@@ -15,6 +17,7 @@ from menu import MenuSystem
 
 class Game:
     def __init__(self):
+        self.replay = ReplayManager()
         pygame.init()
         try:
             pygame.mixer.init()
@@ -42,8 +45,7 @@ class Game:
         self.my_surf = assets.get_image("player_blue")
         self.enemy_surf = assets.get_image("player_red")
 
-        self.shake_timer = 0.0
-        self.shake_intensity = 0
+        self.camera = Camera()
         self.local_shoot_timer = 0.0
         self.hit_marker_timer = 0.0 
         self.particles = []
@@ -86,10 +88,6 @@ class Game:
                 "size": size, "type": p_type
             })
 
-    def trigger_camera_shake(self, duration=0.15, intensity=6):
-        self.shake_timer = duration
-        self.shake_intensity = intensity
-
     def establish_connection(self, ip):
         self.network = Network(ip)
         if self.network.p_id == -1:
@@ -100,15 +98,26 @@ class Game:
         self.state_string = "GAMEPLAY"
 
     def handle_events(self):
+    
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.is_running = False
             if self.state_string == "JOIN_SCREEN":
                 self.menu_manager.handle_keyboard_input(event)
             elif event.type == pygame.KEYDOWN:
+
                 if event.key == pygame.K_ESCAPE:
-                    if self.state_string == "GAMEPLAY": self.state_string = "PAUSED"
-                    elif self.state_string == "PAUSED": self.state_string = "GAMEPLAY"
+
+                    if self.state_string == "GAMEPLAY":
+                        self.state_string = "PAUSED"
+
+                    elif self.state_string == "PAUSED":
+                        self.state_string = "GAMEPLAY"
+
+                elif event.key == pygame.K_F9:
+
+                    self.replay.start()
+            
 
     def update(self, dt: float):
         if self.state_string == "MAIN_MENU":
@@ -137,8 +146,24 @@ class Game:
             return
 
         if self.state_string != "GAMEPLAY": return
+        
+        if self.replay.playing:
 
-        if self.shake_timer > 0.0: self.shake_timer -= dt
+            frame = self.replay.next_frame()
+
+            if frame is None:
+                return
+
+            self.server_players = frame["players"]
+            self.server_bullets = frame["bullets"]
+            self.server_grenades = frame["grenades"]
+            self.server_pickups = frame["pickups"]
+            self.server_crates = frame["crates"]
+            self.server_kill_feed = frame["kill_feed"]
+            self.winner = frame["winner"]
+
+            return
+
         if self.local_shoot_timer > 0.0: self.local_shoot_timer -= dt
         if self.hit_marker_timer > 0.0: self.hit_marker_timer -= dt
 
@@ -159,6 +184,10 @@ class Game:
 
         self.player.handle_input(me_s.get("active_buff", "none"))
         self.player.update(dt, self.walls)
+        self.camera.update(
+            dt,
+            self.player.pos
+        )
 
         packet = {
             "x": self.player.pos.x, "y": self.player.pos.y, "angle": self.player.angle,
@@ -181,11 +210,13 @@ class Game:
                 fy = self.player.pos.y + math.sin(rad) * 25
                 self.spawn_particles(fx, fy, (255, 230, 100), count=4, p_type="spark", size_range=(2, 4), life_range=(0.1, 0.3))
                 self.spawn_particles(fx, fy, (160, 160, 160), count=2, p_type="smoke", life_range=(0.4, 0.8))
-                self.trigger_camera_shake(0.1, 4 if self.player.weapon_idx != 3 else 9)
+                self.camera.shake(0.1,4)
+                self.camera.kick(-5,0)
                 self.play_sound("shoot")
 
         if self.player.request_grenade and me_s.get("is_alive", True):
-            self.trigger_camera_shake(0.12, 5)
+            self.camera.kick(-5, 0)
+            self.camera.shake(0.12, 5)
 
         if self.winner and pygame.key.get_pressed()[pygame.K_SPACE]:
             packet["reset_match"] = True
@@ -218,16 +249,25 @@ class Game:
                 self.spawn_particles(self.player.pos.x + random.randint(-50, 50), self.player.pos.y + random.randint(-50, 50), (230, 230, 200), count=5, size_range=(1, 3), life_range=(0.2, 0.4))
 
         if len(self.server_crates) < old_crates_count:
-            self.trigger_camera_shake(0.2, 8)
+            self.camera.shake(0.2, 8)
             self.spawn_particles(self.player.pos.x, self.player.pos.y, CRATE_COLOR, count=20, size_range=(3, 5), life_range=(0.3, 0.6))
 
         if len(self.server_kill_feed) > len(old_feed):
-            self.trigger_camera_shake(0.3, 14)
+            self.camera.shake(0.3, 14)
             self.spawn_particles(self.player.pos.x, self.player.pos.y, EXPLOSION_COLOR, count=25, size_range=(4, 7), life_range=(0.4, 0.8))
 
         if self.network.p_id in self.server_players and not self.server_players[self.network.p_id]["is_alive"]:
             self.player.pos.x = self.server_players[self.network.p_id]["x"]
             self.player.pos.y = self.server_players[self.network.p_id]["y"]
+        self.replay.record(
+            self.server_players,
+            self.server_bullets,
+            self.server_grenades,
+            self.server_pickups,
+            self.server_crates,
+            self.server_kill_feed,
+            self.winner
+        )
     def draw_world_entities(self, surface):
         for item in self.server_pickups.values():
             col = PICKUP_COLORS.get(item["type"], (255, 255, 255))
@@ -324,11 +364,12 @@ class Game:
             pygame.draw.circle(self.screen, CROSSHAIR_COLOR, m_pos, 2, 0)
 
         if self.winner:
-            ov = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            ov.fill((10, 10, 15, 230))
-            self.screen.blit(ov, (0, 0))
-            wtxt = self.win_font.render(f"{self.winner.upper()} DOMINATES!", True, (255, 215, 0))
-            self.screen.blit(wtxt, (WIDTH//2 - wtxt.get_width()//2, HEIGHT//2 - 40))
+
+            self.camera.set_zoom(1.2)
+            
+        else:
+
+            self.camera.set_zoom(1.0)
 
     def draw(self):
         if self.state_string == "MAIN_MENU":
@@ -363,14 +404,14 @@ class Game:
         canvas.fill(BACKGROUND_COLOR)
         for wall in self.walls: wall.draw(canvas)
         self.draw_world_entities(canvas)
-
-        ox, oy = 0, 0
-        if self.shake_timer > 0.0:
-            ox = random.randint(-int(self.shake_intensity), int(self.shake_intensity))
-            oy = random.randint(-int(self.shake_intensity), int(self.shake_intensity))
+        offset = self.camera.get_offset()
 
         self.screen.fill(BACKGROUND_COLOR)
-        self.screen.blit(canvas, (ox, oy))
+
+        self.screen.blit(
+            canvas,
+            (-offset.x, -offset.y)
+        )
         self.draw_hud_overlays()
         pygame.display.flip()
 
