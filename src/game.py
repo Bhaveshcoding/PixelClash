@@ -1,7 +1,9 @@
 import sys
+import time
 import pygame
 import random
 import math
+from stats import StatsManager
 from replay import ReplayManager
 from assets import assets
 from camera import Camera
@@ -14,9 +16,17 @@ from player import Player
 from wall import Wall
 from network import Network
 from menu import MenuSystem
+from achievements import AchievementManager
+from history import HistoryManager
+from profile import ProfileManager
 
 class Game:
+    
     def __init__(self):
+        self.stats=StatsManager()
+        self.achievements = AchievementManager()
+        self.history = HistoryManager()
+        self.profile = ProfileManager(path="profile.json")
         self.replay = ReplayManager()
         pygame.init()
         try:
@@ -57,6 +67,14 @@ class Game:
         self.server_crates = []
         self.server_kill_feed = []
         self.winner = ""
+        self.match_started_at = time.time()
+        self.match_summary_logged = False
+
+        self.profile.load()
+        self.menu_manager.music_volume = self.profile.data.get("music_volume", self.menu_manager.music_volume)
+        self.menu_manager.sfx_volume = self.profile.data.get("sfx_volume", self.menu_manager.sfx_volume)
+        self.menu_manager.is_fullscreen = self.profile.data.get("fullscreen", self.menu_manager.is_fullscreen)
+        self.menu_manager.show_fps = self.profile.data.get("show_fps", self.menu_manager.show_fps)
 
     def play_sound(self, action):
 
@@ -95,6 +113,8 @@ class Game:
             return
         self.player = Player(spawn_index=self.network.p_id % 4)
         pygame.mouse.set_visible(False)
+        self.match_started_at = time.time()
+        self.match_summary_logged = False
         self.state_string = "GAMEPLAY"
 
     def handle_events(self):
@@ -125,6 +145,9 @@ class Game:
             if cmd == "HOST": self.establish_connection("127.0.0.1")
             elif cmd == "JOIN_SCREEN": self.state_string = "JOIN_SCREEN"
             elif cmd == "SETTINGS": self.state_string = "SETTINGS"
+            elif cmd == "ACHIEVEMENTS": self.state_string = "ACHIEVEMENTS"
+            elif cmd == "MATCH_HISTORY": self.state_string = "MATCH_HISTORY"
+            elif cmd == "CAREER_STATS": self.state_string = "CAREER_STATS"
             elif cmd == "QUIT": self.is_running = False
             return
 
@@ -143,6 +166,32 @@ class Game:
                 else:
                     self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
                 self.menu_manager.screen = self.screen
+            if self.menu_manager.profile_dirty:
+                self.profile.update_settings(
+                    music_volume=self.menu_manager.music_volume,
+                    sfx_volume=self.menu_manager.sfx_volume,
+                    fullscreen=self.menu_manager.is_fullscreen,
+                    show_fps=self.menu_manager.show_fps,
+                )
+                self.menu_manager.profile_dirty = False
+            return
+
+        if self.state_string == "ACHIEVEMENTS":
+            cmd = self.menu_manager.draw_achievements_screen(self.achievements)
+            if cmd == "MAIN_MENU":
+                self.state_string = "MAIN_MENU"
+            return
+
+        if self.state_string == "MATCH_HISTORY":
+            cmd = self.menu_manager.draw_history_screen(self.history)
+            if cmd == "MAIN_MENU":
+                self.state_string = "MAIN_MENU"
+            return
+
+        if self.state_string == "CAREER_STATS":
+            cmd = self.menu_manager.draw_career_stats_screen(self.history)
+            if cmd == "MAIN_MENU":
+                self.state_string = "MAIN_MENU"
             return
 
         if self.state_string != "GAMEPLAY": return
@@ -181,9 +230,17 @@ class Game:
 
         me_s = self.server_players.get(self.network.p_id, {"active_buff": "none", "health": 100, "kills": 0})
         old_kills = me_s.get("kills", 0)
+        old_health = me_s.get("health", 100)
+        was_alive = me_s.get("is_alive", True)
 
         self.player.handle_input(me_s.get("active_buff", "none"))
         self.player.update(dt, self.walls)
+        if me_s.get("is_alive", True):
+
+            self.stats.update_alive(
+                self.network.p_id,
+                dt
+            )
         self.camera.update(
             dt,
             self.player.pos
@@ -201,6 +258,11 @@ class Game:
                 wp = WEAPON_PROFILES[self.player.weapon_idx]
                 self.local_shoot_timer = wp["fire_rate"]
                 packet["shoot"] = True
+                self.stats.record_shot(
+
+                    self.network.p_id
+
+                )
                 packet["bx"], packet["by"] = self.player.pos.x, self.player.pos.y
                 m_x, m_y = pygame.mouse.get_pos()
                 packet["vx"], packet["vy"] = m_x - self.player.pos.x, m_y - self.player.pos.y
@@ -215,18 +277,39 @@ class Game:
                 self.play_sound("shoot")
 
         if self.player.request_grenade and me_s.get("is_alive", True):
+            self.stats.record_grenade(
+            self.network.p_id
+        )
             self.camera.kick(-5, 0)
             self.camera.shake(0.12, 5)
 
         if self.winner and pygame.key.get_pressed()[pygame.K_SPACE]:
             packet["reset_match"] = True
+            self.stats.reset_all()
+            self.match_started_at = time.time()
+            self.match_summary_logged = False
 
         reply = self.network.send_and_receive(packet)
-        
         if not reply:
             self.state_string = "MAIN_MENU"
             pygame.mouse.set_visible(True)
             return
+
+        self.server_players = reply.get("players", {})
+        if reply.get("hit", False):
+            self.stats.record_hit(
+                self.network.p_id,
+                reply.get("damage", 0)
+            )
+
+        for event in reply.get("stat_events", []):
+            pid = int(event.get("pid", self.network.p_id))
+            if event.get("event") == "pickup":
+                self.stats.record_pickup(pid)
+            elif event.get("event") == "crate":
+                self.stats.record_crate(pid)
+            elif event.get("event") == "grenade_hit":
+                self.stats.record_grenade_hit(pid)
 
         old_feed = self.server_kill_feed
         old_bullets_count = len(self.server_bullets)
@@ -239,10 +322,35 @@ class Game:
         self.server_crates = reply.get("crates", {})
         self.server_kill_feed = reply.get("kill_feed", [])
         self.winner = reply.get("winner", "")
+        if self.winner:
+            self.stats.calculate_accuracy(self.network.p_id)
+            if not self.match_summary_logged:
+                player_stats = {}
+                for pid, pl in self.server_players.items():
+                    stats = self.stats.get_stats(int(pid))
+                    player_stats[str(pid)] = {
+                        "kills": pl.get("kills", 0),
+                        "deaths": pl.get("deaths", 0),
+                        "accuracy": getattr(stats, "accuracy", 0),
+                        "damage_dealt": getattr(stats, "damage_dealt", 0),
+                        "damage_taken": getattr(stats, "damage_taken", 0),
+                        "grenades": getattr(stats, "grenades_thrown", 0),
+                        "pickups": getattr(stats, "pickups_collected", 0),
+                        "crates": getattr(stats, "crates_destroyed", 0),
+                        "alive_time": getattr(stats, "time_alive", 0),
+                    }
+                self.history.save_match(self.winner, round(time.time() - self.match_started_at, 2), player_stats)
+                self.profile.update_match(winner=bool(self.winner), weapon=self.player.weapon_idx if self.player else None)
+                self.match_summary_logged = True
         
         new_me = self.server_players.get(self.network.p_id, {"kills": 0, "health": 100})
-        if new_me.get("kills", 0) > old_kills or len(self.server_bullets) < old_bullets_count:
-            self.hit_marker_timer = 0.15 
+        new_health = new_me.get("health", 100)
+        if new_me.get("kills", 0) > old_kills:
+            self.stats.record_kill(self.network.p_id)
+            self.hit_marker_timer = 0.15
+        if new_health < old_health:
+            damage = old_health - new_health
+            self.stats.record_damage_taken(self.network.p_id, damage)
 
         if len(self.server_bullets) < old_bullets_count:
             for _ in range(old_bullets_count - len(self.server_bullets)):
@@ -256,9 +364,17 @@ class Game:
             self.camera.shake(0.3, 14)
             self.spawn_particles(self.player.pos.x, self.player.pos.y, EXPLOSION_COLOR, count=25, size_range=(4, 7), life_range=(0.4, 0.8))
 
-        if self.network.p_id in self.server_players and not self.server_players[self.network.p_id]["is_alive"]:
+        if self.network.p_id in self.server_players and not self.server_players[self.network.p_id]["is_alive"] and was_alive:
+            self.stats.record_death(self.network.p_id)
             self.player.pos.x = self.server_players[self.network.p_id]["x"]
             self.player.pos.y = self.server_players[self.network.p_id]["y"]
+
+        player_stats = self.stats.get_stats(self.network.p_id)
+        self.achievements.check(
+            player_stats,
+            winner=bool(self.winner),
+            health=self.server_players.get(self.network.p_id, {}).get("health", 100),
+        )
         self.replay.record(
             self.server_players,
             self.server_bullets,
@@ -348,6 +464,30 @@ class Game:
             a_txt = self.hud_font.render(ammo_str, True, ammo_col)
             self.screen.blit(a_txt, (35, HEIGHT - 55))
 
+        self.achievements.draw_notifications(self.screen, self.ui_font)
+
+        if self.winner:
+            stats = self.stats.get_stats(self.network.p_id)
+            winner_text = self.win_font.render(f"{self.winner} WINS", True, (255, 215, 0))
+            self.screen.blit(winner_text, (WIDTH // 2 - winner_text.get_width() // 2, 120))
+
+            stat_lines = [
+                f"Kills: {stats.kills}",
+                f"Deaths: {stats.deaths}",
+                f"Accuracy: {stats.accuracy:.2f}%",
+                f"Damage Dealt: {stats.damage_dealt}",
+                f"Damage Taken: {stats.damage_taken}",
+                f"Pickups Collected: {stats.pickups_collected}",
+                f"Grenades Thrown: {stats.grenades_thrown}",
+                f"Longest Kill Streak: {stats.longest_kill_streak}",
+                f"Time Alive: {stats.time_alive:.1f}s"
+            ]
+            line_y = 200
+            for line in stat_lines:
+                line_surf = self.ui_font.render(line, True, UI_COLOR)
+                self.screen.blit(line_surf, (WIDTH // 2 - line_surf.get_width() // 2, line_y))
+                line_y += 24
+
         if self.menu_manager.show_fps:
             fps_str = f"FPS: {int(self.clock.get_fps())}"
             fps_txt = self.ui_font.render(fps_str, True, (0, 255, 150))
@@ -364,7 +504,6 @@ class Game:
             pygame.draw.circle(self.screen, CROSSHAIR_COLOR, m_pos, 2, 0)
 
         if self.winner:
-
             self.camera.set_zoom(1.2)
             
         else:
@@ -377,6 +516,10 @@ class Game:
             if cmd == "HOST": self.establish_connection("127.0.0.1")
             elif cmd == "JOIN_SCREEN": self.state_string = "JOIN_SCREEN"
             elif cmd == "SETTINGS": self.state_string = "SETTINGS"
+            elif cmd == "MATCH_HISTORY": self.state_string = "MATCH_HISTORY"
+            elif cmd == "CAREER_STATS": self.state_string = "CAREER_STATS"
+            elif cmd == "MATCH_HISTORY": self.state_string = "MATCH_HISTORY"
+            elif cmd == "CAREER_STATS": self.state_string = "CAREER_STATS"
             elif cmd == "QUIT": self.is_running = False
             pygame.display.flip()
             return
@@ -399,6 +542,27 @@ class Game:
                 self.menu_manager.screen = self.screen
             pygame.display.flip()
             return
+
+        if self.state_string == "ACHIEVEMENTS":
+            cmd = self.menu_manager.draw_achievements_screen(self.achievements)
+            if cmd == "MAIN_MENU":
+                self.state_string = "MAIN_MENU"
+            pygame.display.flip()
+            return
+
+        if self.state_string == "MATCH_HISTORY":
+            cmd = self.menu_manager.draw_history_screen(self.history)
+            if cmd == "MAIN_MENU":
+                self.state_string = "MAIN_MENU"
+            pygame.display.flip()
+            return
+
+        if self.state_string == "CAREER_STATS":
+            cmd = self.menu_manager.draw_career_stats_screen(self.history)
+            if cmd == "MAIN_MENU":
+                self.state_string = "MAIN_MENU"
+            pygame.display.flip()
+            return
             
         canvas = pygame.Surface((WIDTH, HEIGHT))
         canvas.fill(BACKGROUND_COLOR)
@@ -416,6 +580,7 @@ class Game:
         pygame.display.flip()
 
     def run(self):
+        
         while self.is_running:
             self.handle_events()
             dt = self.clock.tick(FPS) / 1000.0

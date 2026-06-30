@@ -17,6 +17,9 @@ class MenuSystem:
         self.sfx_volume = 0.5
         self.is_fullscreen = False
         self.show_fps = True
+        self.profile_dirty = False
+        self.history_scroll = 0
+        self.career_scroll = 0
         
         # Single-Click Event Tracking Triggers
         self.mouse_was_pressed = False
@@ -37,13 +40,16 @@ class MenuSystem:
         t_surf = self.font_title.render("PIXEL CLASH", True, (0, 200, 255))
         self.screen.blit(t_surf, (WIDTH//2 - t_surf.get_width()//2, 100))
 
-        btn_host = pygame.Rect(WIDTH//2 - 150, 240, 300, 50)
-        btn_join = pygame.Rect(WIDTH//2 - 150, 320, 300, 50)
-        btn_sett = pygame.Rect(WIDTH//2 - 150, 400, 300, 50) 
-        btn_quit = pygame.Rect(WIDTH//2 - 150, 480, 300, 50)
+        btn_host = pygame.Rect(WIDTH//2 - 150, 180, 300, 50)
+        btn_join = pygame.Rect(WIDTH//2 - 150, 245, 300, 50)
+        btn_sett = pygame.Rect(WIDTH//2 - 150, 310, 300, 50) 
+        btn_ach = pygame.Rect(WIDTH//2 - 150, 375, 300, 50)
+        btn_hist = pygame.Rect(WIDTH//2 - 150, 440, 300, 50)
+        btn_stats = pygame.Rect(WIDTH//2 - 150, 505, 300, 50)
+        btn_quit = pygame.Rect(WIDTH//2 - 150, 570, 300, 50)
 
         m_pos = pygame.mouse.get_pos()
-        buttons = [(btn_host, "HOST GAME"), (btn_join, "JOIN GAME"), (btn_sett, "SETTINGS"), (btn_quit, "QUIT")]
+        buttons = [(btn_host, "HOST GAME"), (btn_join, "JOIN GAME"), (btn_sett, "SETTINGS"), (btn_ach, "ACHIEVEMENTS"), (btn_hist, "MATCH HISTORY"), (btn_stats, "CAREER STATS"), (btn_quit, "QUIT")]
         
         for r, text in buttons:
             color = (100, 100, 120) if r.collidepoint(m_pos) else (50, 50, 60)
@@ -55,6 +61,9 @@ class MenuSystem:
             if btn_host.collidepoint(m_pos): return "HOST"
             if btn_join.collidepoint(m_pos): return "JOIN_SCREEN"
             if btn_sett.collidepoint(m_pos): return "SETTINGS"
+            if btn_ach.collidepoint(m_pos): return "ACHIEVEMENTS"
+            if btn_hist.collidepoint(m_pos): return "MATCH_HISTORY"
+            if btn_stats.collidepoint(m_pos): return "CAREER_STATS"
             if btn_quit.collidepoint(m_pos): return "QUIT"
         return "MAIN_MENU"
 
@@ -75,6 +84,7 @@ class MenuSystem:
         pygame.draw.rect(self.screen, (60, 60, 70), m_slider)
         if m_hold and m_slider.inflate(0, 20).collidepoint(m_pos):
             self.music_volume = max(0.0, min(1.0, (m_pos[0] - m_slider.x) / m_slider.width))
+            self.profile_dirty = True
         pygame.draw.circle(self.screen, (0, 200, 255), (int(m_slider.x + self.music_volume * m_slider.width), m_slider.centery), 10)
 
         # 2. SFX Volume Bar UI Layout (Polled smoothly on down-hold)
@@ -84,6 +94,7 @@ class MenuSystem:
         pygame.draw.rect(self.screen, (60, 60, 70), s_slider)
         if m_hold and s_slider.inflate(0, 20).collidepoint(m_pos):
             self.sfx_volume = max(0.0, min(1.0, (m_pos[0] - s_slider.x) / s_slider.width))
+            self.profile_dirty = True
         pygame.draw.circle(self.screen, (0, 200, 255), (int(s_slider.x + self.sfx_volume * s_slider.width), s_slider.centery), 10)
 
         # 3. Fullscreen Checkbox UI Layout (Fires cleanly on click edge)
@@ -113,13 +124,92 @@ class MenuSystem:
         if self.click_registered:
             if fs_box.collidepoint(m_pos):
                 self.is_fullscreen = not self.is_fullscreen
+                self.profile_dirty = True
                 return "TOGGLE_FULLSCREEN"
             if fps_box.collidepoint(m_pos):
                 self.show_fps = not self.show_fps
+                self.profile_dirty = True
             if btn_back.collidepoint(m_pos):
                 return "MAIN_MENU"
 
         return "SETTINGS"
+
+    def draw_achievements_screen(self, achievements) -> str:
+        self.update_clicks()
+        self.screen.fill(BACKGROUND_COLOR)
+        title = self.font_title.render("ACHIEVEMENTS", True, UI_COLOR)
+        self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 80))
+        achievements.draw_menu(self.screen, self.font_sm)
+        btn_back = pygame.Rect(WIDTH//2 - 150, 520, 300, 50)
+        m_pos = pygame.mouse.get_pos()
+        c = (100, 100, 120) if btn_back.collidepoint(m_pos) else (50, 50, 60)
+        pygame.draw.rect(self.screen, c, btn_back, border_radius=8)
+        t = self.font_btn.render("BACK", True, UI_COLOR)
+        self.screen.blit(t, (btn_back.centerx - t.get_width()//2, btn_back.centery - t.get_height()//2))
+        if self.click_registered and btn_back.collidepoint(m_pos):
+            return "MAIN_MENU"
+        return "ACHIEVEMENTS"
+
+    def draw_history_screen(self, history_manager) -> str:
+        self.update_clicks()
+        self.screen.fill(BACKGROUND_COLOR)
+        title = self.font_title.render("MATCH HISTORY", True, UI_COLOR)
+        self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 70))
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_UP]:
+            self.history_scroll = max(0, self.history_scroll - 1)
+        if keys[pygame.K_DOWN]:
+            self.history_scroll += 1
+        matches = history_manager.load_matches()
+        start = self.history_scroll
+        for idx, match in enumerate(matches[start:start + 8]):
+            y = 150 + idx * 70
+            winner = match.get("winner", "UNKNOWN")
+            date = match.get("date", "")
+            duration = match.get("duration", 0)
+            players = match.get("players", {})
+            kills = ", ".join(f"P{pid}:{p.get('kills',0)}" for pid,p in players.items())
+            text = self.font_sm.render(f"{winner} | {date} | {duration}s | {kills}", True, UI_COLOR)
+            self.screen.blit(text, (40, y))
+        btn_back = pygame.Rect(WIDTH//2 - 150, 620, 300, 40)
+        m_pos = pygame.mouse.get_pos()
+        c = (100, 100, 120) if btn_back.collidepoint(m_pos) else (50, 50, 60)
+        pygame.draw.rect(self.screen, c, btn_back, border_radius=8)
+        t = self.font_btn.render("BACK", True, UI_COLOR)
+        self.screen.blit(t, (btn_back.centerx - t.get_width()//2, btn_back.centery - t.get_height()//2))
+        if self.click_registered and btn_back.collidepoint(m_pos):
+            return "MAIN_MENU"
+        return "MATCH_HISTORY"
+
+    def draw_career_stats_screen(self, history_manager) -> str:
+        self.update_clicks()
+        self.screen.fill(BACKGROUND_COLOR)
+        title = self.font_title.render("CAREER STATS", True, UI_COLOR)
+        self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 70))
+        stats = history_manager.get_career_stats()
+        lines = [
+            f"Matches Played: {stats.get('matches_played', 0)}",
+            f"Wins: {stats.get('wins', 0)}",
+            f"Losses: {stats.get('losses', 0)}",
+            f"Overall Accuracy: {stats.get('overall_accuracy', 0):.2f}%",
+            f"Average Damage: {stats.get('average_damage', 0):.2f}",
+            f"Average Survival Time: {stats.get('average_survival_time', 0):.2f}s",
+            f"Highest Kill Streak: {stats.get('highest_kill_streak', 0)}",
+            f"Average Kills: {stats.get('average_kills', 0):.2f}",
+            f"Average Deaths: {stats.get('average_deaths', 0):.2f}",
+        ]
+        for idx, line in enumerate(lines):
+            text = self.font_sm.render(line, True, UI_COLOR)
+            self.screen.blit(text, (120, 180 + idx * 38))
+        btn_back = pygame.Rect(WIDTH//2 - 150, 620, 300, 40)
+        m_pos = pygame.mouse.get_pos()
+        c = (100, 100, 120) if btn_back.collidepoint(m_pos) else (50, 50, 60)
+        pygame.draw.rect(self.screen, c, btn_back, border_radius=8)
+        t = self.font_btn.render("BACK", True, UI_COLOR)
+        self.screen.blit(t, (btn_back.centerx - t.get_width()//2, btn_back.centery - t.get_height()//2))
+        if self.click_registered and btn_back.collidepoint(m_pos):
+            return "MAIN_MENU"
+        return "CAREER_STATS"
 
     def draw_join_screen(self) -> tuple:
         self.update_clicks()

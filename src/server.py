@@ -30,6 +30,7 @@ pickups = {}
 crates = []        
 kill_feed = []     
 match_winner = ""
+stat_events = []
 
 # ❌ Critical Bug #2 Fixed: Cleanly unpack tuple layout indices via asterisk expansions
 walls = [pygame.Rect(*w) for w in WALL_LAYOUTS]
@@ -63,8 +64,10 @@ def handle_pickup_spawning(dt):
         pickup_id_counter += 1
 
 def update_server_game_logic(dt):
-    global match_winner, kill_feed
+    global match_winner, kill_feed, stat_events
     if match_winner: return
+
+    stat_events.clear()
 
     handle_pickup_spawning(dt)
 
@@ -101,6 +104,7 @@ def update_server_game_logic(dt):
                     p["active_buff"] = item["type"]
                     p["buff_timer"] = 8.0 if item["type"] == "DAMAGE" else 10.0
                 del pickups[p_key]
+                stat_events.append({"pid": p_id, "event": "pickup", "type": item["type"]})
                 break
 
     for b in bullets[:]:
@@ -125,6 +129,7 @@ def update_server_game_logic(dt):
                         }
                         pickup_id_counter += 1
                     crates.remove(crate)
+                    stat_events.append({"pid": b["owner_id"], "event": "crate"})
                 break
         if hit_something: continue
 
@@ -189,6 +194,7 @@ def update_server_game_logic(dt):
                         p["deaths"] += 1
                         if g["owner_id"] in players:
                             players[g["owner_id"]]["kills"] += 1
+                            stat_events.append({"pid": g["owner_id"], "event": "grenade_hit", "damage": g_dmg})
                             kill_feed.append(f"Player {g['owner_id']} exploded Player {p_id}")
                             if len(kill_feed) > 5: kill_feed.pop(0)
                             if players[g["owner_id"]]["kills"] >= 10: match_winner = f"Player {g['owner_id']}"
@@ -197,7 +203,9 @@ def update_server_game_logic(dt):
                 c_pos = pygame.Vector2(crate["x"] + CRATE_SIZE//2, crate["y"] + CRATE_SIZE//2)
                 if g_pos.distance_to(c_pos) <= 150:
                     crate["hp"] -= 40
-                    if crate["hp"] <= 0: crates.remove(crate)
+                    if crate["hp"] <= 0:
+                        crates.remove(crate)
+                        stat_events.append({"pid": g["owner_id"], "event": "crate"})
             if g in grenades: grenades.remove(g)
 
 def server_ticks_loop():
@@ -306,7 +314,8 @@ def handle_client(conn, player_id):
                 "pickups": pickups,
                 "crates": crates,
                 "kill_feed": kill_feed,
-                "winner": match_winner
+                "winner": match_winner,
+                "stat_events": list(stat_events)
             }
             conn.sendall(pickle.dumps(response_package))
         except Exception:
