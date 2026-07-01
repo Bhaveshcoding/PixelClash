@@ -1,3 +1,4 @@
+import os
 import socket
 import threading
 import pickle
@@ -5,6 +6,7 @@ import time
 import pygame
 import random
 import math
+from logger import GameLogger
 from constants import (
     SPAWN_POINTS, MAX_HEALTH, WALL_LAYOUTS, PLAYER_SIZE, BULLET_SIZE, 
     CRATE_LAYOUTS, CRATE_SIZE, WEAPON_PROFILES
@@ -21,7 +23,9 @@ except socket.error as e:
     exit()
 
 server_socket.listen(4)
+logger = GameLogger(log_dir=os.path.join(os.path.dirname(__file__), "..", "logs"))
 print("[SERVER] Authoritative Server online. Physics layout successfully initiated.")
+logger.info("Server Started")
 
 players = {}       
 bullets = []       
@@ -221,6 +225,7 @@ threading.Thread(target=server_ticks_loop, daemon=True).start()
 def handle_client(conn, player_id):
     global match_winner, kill_feed
     print(f"[SERVER] Client connected slot index token assigned: {player_id}")
+    logger.info(f"Client Connected: {player_id}")
     
     s_idx = player_id % len(SPAWN_POINTS)
     sx, sy = SPAWN_POINTS[s_idx]
@@ -241,7 +246,9 @@ def handle_client(conn, player_id):
     while True:
         try:
             data = conn.recv(4096)
-            if not data: break
+            if not data:
+                logger.info(f"Client Disconnected: {player_id}")
+                break
             client_payload = pickle.loads(data)
             p = players[player_id]
 

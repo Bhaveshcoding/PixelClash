@@ -1,110 +1,89 @@
+from typing import Dict, Union
+
+
 class PlayerStats:
-    def __init__(self):
+    """Container for per-player combat statistics."""
+
+    def __init__(self) -> None:
         self.kills = 0
         self.deaths = 0
         self.shots_fired = 0
         self.shots_hit = 0
-
         self.grenades_thrown = 0
         self.grenade_hits = 0
-
         self.damage_dealt = 0
         self.damage_taken = 0
-
         self.pickups_collected = 0
         self.crates_destroyed = 0
-
         self.current_kill_streak = 0
         self.longest_kill_streak = 0
+        self.time_alive = 0.0
+        self.accuracy = 0.0
 
-        self.time_alive = 0
-
-        self.accuracy = 0
-        
-    def reset(self):
+    def reset(self) -> None:
+        """Reset the tracked values to their defaults."""
         self.__init__()
 
+
 class StatsManager:
+    """Manage combat statistics for players."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        self.players: Dict[Union[int, str], PlayerStats] = {}
 
-        self.players = {}
-    def get_player(self,pid):
-        if pid not in self.players:
+    def get_player(self, pid: Union[int, str]) -> PlayerStats:
+        """Return the stats object for a player, creating it if needed."""
+        player = self.players.get(pid)
+        if player is None:
+            player = PlayerStats()
+            self.players[pid] = player
+        return player
 
-            self.players[pid]=PlayerStats()
+    def record_shot(self, pid: Union[int, str]) -> None:
+        self.get_player(pid).shots_fired += 1
 
-        return self.players[pid]
-    def record_shot(self,pid):
-        self.get_player(pid).shots_fired+=1
-        
-    def record_hit(self,pid,damage):
+    def record_hit(self, pid: Union[int, str], damage: int) -> None:
+        player = self.get_player(pid)
+        player.shots_hit += 1
+        player.damage_dealt += damage
 
-        p=self.get_player(pid)
+    def record_damage_taken(self, pid: Union[int, str], damage: int) -> None:
+        self.get_player(pid).damage_taken += damage
 
-        p.shots_hit+=1
+    def record_grenade_hit(self, pid: Union[int, str]) -> None:
+        self.get_player(pid).grenade_hits += 1
 
-        p.damage_dealt+=damage
-    def record_damage_taken(self,pid,damage):
-
-        self.get_player(pid).damage_taken+=damage
-    def record_grenade_hit(self,pid):
-
-        self.get_player(pid).grenade_hits+=1
-    def record_grenade(self, pid):
-
+    def record_grenade(self, pid: Union[int, str]) -> None:
         self.get_player(pid).grenades_thrown += 1
-    def record_pickup(self,pid):
 
-        self.get_player(pid).pickups_collected+=1
-    def record_crate(self,pid):
+    def record_pickup(self, pid: Union[int, str]) -> None:
+        self.get_player(pid).pickups_collected += 1
 
-        self.get_player(pid).crates_destroyed+=1
-        
-    def record_kill(self,pid):
+    def record_crate(self, pid: Union[int, str]) -> None:
+        self.get_player(pid).crates_destroyed += 1
 
-        p=self.get_player(pid)
+    def record_kill(self, pid: Union[int, str]) -> None:
+        player = self.get_player(pid)
+        player.kills += 1
+        player.current_kill_streak += 1
+        if player.current_kill_streak > player.longest_kill_streak:
+            player.longest_kill_streak = player.current_kill_streak
 
-        p.kills+=1
+    def record_death(self, pid: Union[int, str]) -> None:
+        player = self.get_player(pid)
+        player.deaths += 1
+        player.current_kill_streak = 0
 
-        p.current_kill_streak+=1
+    def update_alive(self, pid: Union[int, str], dt: float) -> None:
+        self.get_player(pid).time_alive += dt
 
-        if p.current_kill_streak>p.longest_kill_streak:
+    def calculate_accuracy(self, pid: Union[int, str]) -> None:
+        player = self.get_player(pid)
+        player.accuracy = 0.0 if player.shots_fired == 0 else (player.shots_hit / player.shots_fired) * 100
 
-            p.longest_kill_streak=p.current_kill_streak
-    def record_death(self,pid):
+    def reset_all(self) -> None:
+        for player in self.players.values():
+            player.reset()
 
-        p=self.get_player(pid)
-
-        p.deaths+=1
-
-        p.current_kill_streak=0
-    def update_alive(self,pid,dt):
-        self.get_player(pid).time_alive+=dt
-
-    def calculate_accuracy(self,pid):
-        p=self.get_player(pid)
-
-        if p.shots_fired==0:
-
-            p.accuracy=0
-
-        else:
-
-            p.accuracy=(
-
-                p.shots_hit
-
-                /
-
-                p.shots_fired
-
-            )*100
-    def reset_all(self):
-        for p in self.players.values():
-
-            p.reset()
-            
-    def get_stats(self, pid):
-        return self.get_player(pid)
-            
+    def get_stats(self, pid: Union[int, str]) -> PlayerStats:
+        return self.get_player(pid)            

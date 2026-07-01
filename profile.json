@@ -1,0 +1,13 @@
+{
+    "player_name": "Player",
+    "crosshair": "default",
+    "fullscreen": true,
+    "music_volume": 0.5,
+    "sfx_volume": 0.5,
+    "show_fps": true,
+    "total_matches": 0,
+    "total_wins": 0,
+    "favorite_weapon": "Pistol",
+    "favorite_skin": "default",
+    "last_played": ""
+}

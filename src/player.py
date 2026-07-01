@@ -19,7 +19,7 @@ class Player:
         self.grenade_target_vec = pygame.Vector2(0, 0)
         self.grenade_button_held = False # 🟠 Runtime Issue #3 Fixed
 
-    def handle_input(self, current_buff="none"):
+    def handle_input(self, current_buff="none", camera_offset=None):
         keys = pygame.key.get_pressed()
         self.velocity.x = 0
         self.velocity.y = 0
@@ -48,13 +48,16 @@ class Player:
         if keys[pygame.K_g]:
             if not self.grenade_button_held:
                 self.request_grenade = True
-                m_x, m_y = pygame.mouse.get_pos()
-                self.grenade_target_vec = pygame.Vector2(m_x - self.pos.x, m_y - self.pos.y)
+                mouse_pos = pygame.mouse.get_pos()
+                if camera_offset is None:
+                    camera_offset = pygame.Vector2(0, 0)
+                world_mouse = pygame.Vector2(mouse_pos[0], mouse_pos[1]) + camera_offset
+                self.grenade_target_vec = pygame.Vector2(world_mouse.x - self.pos.x, world_mouse.y - self.pos.y)
                 self.grenade_button_held = True 
         else:
             self.grenade_button_held = False 
 
-    def update(self, dt: float, walls: list):
+    def update(self, dt: float, walls: list, camera_offset=None):
         self.pos.x += self.velocity.x * dt
         self.rect.x = int(self.pos.x - self.size//2)
         for wall in walls:
@@ -71,5 +74,8 @@ class Player:
                 elif self.velocity.y < 0: self.pos.y = wall.rect.bottom + self.size//2
                 self.rect.y = int(self.pos.y - self.size//2)
 
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        self.angle = math.degrees(math.atan2(mouse_y - self.pos.y, mouse_x - self.pos.x))
+        mouse_pos = pygame.mouse.get_pos()
+        if camera_offset is None:
+            camera_offset = pygame.Vector2(0, 0)
+        world_mouse = pygame.Vector2(mouse_pos[0], mouse_pos[1]) + camera_offset
+        self.angle = math.degrees(math.atan2(world_mouse.y - self.pos.y, world_mouse.x - self.pos.x))

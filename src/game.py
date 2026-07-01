@@ -7,6 +7,8 @@ from stats import StatsManager
 from replay import ReplayManager
 from assets import assets
 from camera import Camera
+from config import ConfigManager
+from logger import GameLogger
 from constants import (
     WIDTH, HEIGHT, FPS, TITLE, BACKGROUND_COLOR, WALL_LAYOUTS,
     CROSSHAIR_COLOR, UI_COLOR, PLAYER_SIZE, BULLET_SIZE, CRATE_COLOR,
@@ -19,10 +21,13 @@ from menu import MenuSystem
 from achievements import AchievementManager
 from history import HistoryManager
 from profile import ProfileManager
+from console import DeveloperConsole
 
 class Game:
     
     def __init__(self):
+        self.config = ConfigManager()
+        self.logger = GameLogger()
         self.stats=StatsManager()
         self.achievements = AchievementManager()
         self.history = HistoryManager()
@@ -43,8 +48,10 @@ class Game:
         
         self.state_string = "MAIN_MENU"
         self.menu_manager = MenuSystem(self.screen)
+        self.console = DeveloperConsole(self, self.ui_font if hasattr(self, "ui_font") else None)
         
         self.ui_font = assets.get_font(18, "Arial", True)
+        self.console.font = self.ui_font
         self.hud_font = assets.get_font(28, "Impact")
         self.win_font = assets.get_font(72, "Impact")
         
@@ -71,10 +78,14 @@ class Game:
         self.match_summary_logged = False
 
         self.profile.load()
-        self.menu_manager.music_volume = self.profile.data.get("music_volume", self.menu_manager.music_volume)
-        self.menu_manager.sfx_volume = self.profile.data.get("sfx_volume", self.menu_manager.sfx_volume)
+        self.logger.info("Profile Loaded")
+        self.logger.info("Configuration Loaded")
+        self.menu_manager.music_volume = self.profile.data.get("music_volume", self.config.get("music_volume", self.menu_manager.music_volume))
+        self.menu_manager.sfx_volume = self.profile.data.get("sfx_volume", self.config.get("sfx_volume", self.menu_manager.sfx_volume))
         self.menu_manager.is_fullscreen = self.profile.data.get("fullscreen", self.menu_manager.is_fullscreen)
         self.menu_manager.show_fps = self.profile.data.get("show_fps", self.menu_manager.show_fps)
+        self.logger.info("Game Started")
+        self.console = DeveloperConsole(self, self.ui_font)
 
     def play_sound(self, action):
 
@@ -116,12 +127,24 @@ class Game:
         self.match_started_at = time.time()
         self.match_summary_logged = False
         self.state_string = "GAMEPLAY"
+        self.logger.info(f"Match Started: {ip}")
 
     def handle_events(self):
     
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.is_running = False
+                continue
+
+            if self.console.is_open:
+                if self.console.handle_event(event):
+                    continue
+                if event.type == pygame.KEYDOWN:
+                    continue
+
+            if self.console.handle_event(event):
+                continue
+
             if self.state_string == "JOIN_SCREEN":
                 self.menu_manager.handle_keyboard_input(event)
             elif event.type == pygame.KEYDOWN:
@@ -173,6 +196,7 @@ class Game:
                     fullscreen=self.menu_manager.is_fullscreen,
                     show_fps=self.menu_manager.show_fps,
                 )
+                self.logger.info("Profile Saved")
                 self.menu_manager.profile_dirty = False
             return
 
@@ -233,8 +257,9 @@ class Game:
         old_health = me_s.get("health", 100)
         was_alive = me_s.get("is_alive", True)
 
-        self.player.handle_input(me_s.get("active_buff", "none"))
-        self.player.update(dt, self.walls)
+        camera_offset = self.camera.get_offset()
+        self.player.handle_input(me_s.get("active_buff", "none"), camera_offset)
+        self.player.update(dt, self.walls, camera_offset)
         if me_s.get("is_alive", True):
 
             self.stats.update_alive(
@@ -264,8 +289,8 @@ class Game:
 
                 )
                 packet["bx"], packet["by"] = self.player.pos.x, self.player.pos.y
-                m_x, m_y = pygame.mouse.get_pos()
-                packet["vx"], packet["vy"] = m_x - self.player.pos.x, m_y - self.player.pos.y
+                mouse_pos = pygame.Vector2(*pygame.mouse.get_pos()) + camera_offset
+                packet["vx"], packet["vy"] = mouse_pos.x - self.player.pos.x, mouse_pos.y - self.player.pos.y
                 
                 rad = math.radians(self.player.angle)
                 fx = self.player.pos.x + math.cos(rad) * 25
@@ -340,7 +365,10 @@ class Game:
                         "alive_time": getattr(stats, "time_alive", 0),
                     }
                 self.history.save_match(self.winner, round(time.time() - self.match_started_at, 2), player_stats)
+                self.logger.info(f"History Saved: {self.winner}")
                 self.profile.update_match(winner=bool(self.winner), weapon=self.player.weapon_idx if self.player else None)
+                self.logger.info("Profile Saved")
+                self.logger.info(f"Match Ended: {self.winner}")
                 self.match_summary_logged = True
         
         new_me = self.server_players.get(self.network.p_id, {"kills": 0, "health": 100})
@@ -370,11 +398,15 @@ class Game:
             self.player.pos.y = self.server_players[self.network.p_id]["y"]
 
         player_stats = self.stats.get_stats(self.network.p_id)
+        achievement_state_before = {name: achievement.unlocked for name, achievement in self.achievements.achievements.items()}
         self.achievements.check(
             player_stats,
             winner=bool(self.winner),
             health=self.server_players.get(self.network.p_id, {}).get("health", 100),
         )
+        for name, achievement in self.achievements.achievements.items():
+            if not achievement_state_before.get(name, False) and achievement.unlocked:
+                self.logger.info(f"Achievement Unlocked: {name}")
         self.replay.record(
             self.server_players,
             self.server_bullets,
@@ -574,9 +606,10 @@ class Game:
 
         self.screen.blit(
             canvas,
-            (-offset.x, -offset.y)
+            (-int(offset.x), -int(offset.y))
         )
         self.draw_hud_overlays()
+        self.console.draw(self.screen)
         pygame.display.flip()
 
     def run(self):

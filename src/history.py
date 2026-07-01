@@ -1,15 +1,19 @@
 import json
 import os
 from datetime import datetime
+from typing import Any, Dict, List
 
 
 class HistoryManager:
-    def __init__(self, folder="matches"):
+    """Persist and summarize previous match results."""
+
+    def __init__(self, folder: str = "matches") -> None:
         self.folder = folder
         os.makedirs(self.folder, exist_ok=True)
 
-    def save_match(self, winner, duration, player_stats):
-        files = [f for f in os.listdir(self.folder) if f.endswith(".json")]
+    def save_match(self, winner: str, duration: float, player_stats: Dict[str, Any]) -> str:
+        """Save a match result to disk and return the written file path."""
+        files = [name for name in os.listdir(self.folder) if name.endswith(".json")]
         next_index = len(files) + 1
         filename = os.path.join(self.folder, f"match_{next_index:03d}.json")
         payload = {
@@ -23,17 +27,18 @@ class HistoryManager:
         self.cleanup()
         return filename
 
-    def load_matches(self):
-        matches = []
+    def load_matches(self) -> List[Dict[str, Any]]:
+        """Load all saved matches sorted by newest first."""
+        matches: List[Dict[str, Any]] = []
         for filename in sorted(os.listdir(self.folder)):
             if filename.endswith(".json"):
                 path = os.path.join(self.folder, filename)
                 with open(path, "r", encoding="utf-8") as handle:
-                    data = json.load(handle)
-                matches.append(data)
+                    matches.append(json.load(handle))
         return sorted(matches, key=lambda item: item.get("date", ""), reverse=True)
 
-    def get_career_stats(self):
+    def get_career_stats(self) -> Dict[str, Any]:
+        """Return aggregate career statistics from stored matches."""
         matches = self.load_matches()
         if not matches:
             return {
@@ -47,6 +52,7 @@ class HistoryManager:
                 "average_kills": 0.0,
                 "average_deaths": 0.0,
             }
+
         total_accuracy = 0.0
         total_damage = 0.0
         total_survival = 0.0
@@ -64,7 +70,8 @@ class HistoryManager:
                 total_deaths += stats.get("deaths", 0)
             if match.get("winner"):
                 wins += 1
-            highest = max(highest, max((p.get("longest_kill_streak", 0) for p in players.values()), default=0))
+            highest = max(highest, max((player.get("longest_kill_streak", 0) for player in players.values()), default=0))
+
         player_count = max(1, len(matches) * len(matches[0].get("players", {})))
         return {
             "matches_played": len(matches),
@@ -78,8 +85,9 @@ class HistoryManager:
             "average_deaths": round(total_deaths / player_count, 2),
         }
 
-    def cleanup(self):
-        files = sorted([os.path.join(self.folder, f) for f in os.listdir(self.folder) if f.endswith(".json")])
+    def cleanup(self) -> None:
+        """Prune old history files to keep the folder bounded."""
+        files = sorted(os.path.join(self.folder, name) for name in os.listdir(self.folder) if name.endswith(".json"))
         for extra in files[:-100]:
             if os.path.exists(extra):
                 os.remove(extra)

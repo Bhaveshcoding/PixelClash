@@ -1,20 +1,25 @@
-import os
 import time
+from typing import Dict, List, Optional, Any
+
 import pygame
 
 
 class Achievement:
-    def __init__(self, name, description, icon="🏆"):
+    """Represents a single achievement entry."""
+
+    def __init__(self, name: str, description: str, icon: str = "🏆") -> None:
         self.name = name
         self.description = description
         self.unlocked = False
         self.icon = icon
-        self.unlock_time = None
+        self.unlock_time: Optional[float] = None
 
 
 class AchievementManager:
-    def __init__(self):
-        self.achievements = {
+    """Track and render achievements and unlock notifications."""
+
+    def __init__(self) -> None:
+        self.achievements: Dict[str, Achievement] = {
             "First Blood": Achievement("First Blood", "Get your first kill."),
             "Untouchable": Achievement("Untouchable", "Get 5 kills without dying."),
             "Sharpshooter": Achievement("Sharpshooter", "Reach 80% accuracy with at least 30 shots fired."),
@@ -24,27 +29,24 @@ class AchievementManager:
             "Survivor": Achievement("Survivor", "Win the match while having health below 20."),
             "Rampage": Achievement("Rampage", "Reach a kill streak of 10."),
         }
-        self.notifications = []
-        self._last_checked = None
+        self.notifications: List[Dict[str, Any]] = []
+        self._last_checked: Optional[int] = None
 
-    def unlock(self, name):
-        if name in self.achievements and not self.achievements[name].unlocked:
-            self.achievements[name].unlocked = True
-            self.achievements[name].unlock_time = time.time()
-            self.notifications.append({
-                "name": name,
-                "created_at": time.time(),
-                "alpha": 255,
-            })
+    def unlock(self, name: str) -> None:
+        """Unlock an achievement if it exists and is not already unlocked."""
+        achievement = self.achievements.get(name)
+        if achievement is None or achievement.unlocked:
+            return
 
-    def check(self, player_stats, winner=None, health=None):
+        achievement.unlocked = True
+        achievement.unlock_time = time.time()
+        self.notifications.append({"name": name, "created_at": time.time(), "alpha": 255})
+
+    def check(self, player_stats: Any, winner: Optional[bool] = None, health: Optional[int] = None) -> None:
+        """Evaluate gameplay stats and unlock any matching achievements."""
         stats = player_stats
-        resolved_winner = winner
-        if resolved_winner is None:
-            resolved_winner = getattr(stats, "winner", False)
-        resolved_health = health
-        if resolved_health is None:
-            resolved_health = getattr(stats, "health", 100)
+        resolved_winner = winner if winner is not None else getattr(stats, "winner", False)
+        resolved_health = health if health is not None else getattr(stats, "health", 100)
 
         if getattr(stats, "kills", 0) >= 1:
             self.unlock("First Blood")
@@ -64,15 +66,17 @@ class AchievementManager:
             self.unlock("Rampage")
         self._last_checked = getattr(stats, "kills", 0)
 
-    def reset(self):
+    def reset(self) -> None:
+        """Reset all achievements and notifications."""
         for achievement in self.achievements.values():
             achievement.unlocked = False
             achievement.unlock_time = None
         self.notifications = []
 
-    def draw_notifications(self, surface, font):
+    def draw_notifications(self, surface: pygame.Surface, font: pygame.font.Font) -> None:
+        """Render active achievement notifications."""
         current_time = time.time()
-        active = []
+        active: List[Dict[str, Any]] = []
         for notification in self.notifications:
             age = current_time - notification["created_at"]
             if age < 3.0:
@@ -97,7 +101,8 @@ class AchievementManager:
             surface.blit(txt, (x + 10, y + 8))
             y += 70
 
-    def draw_menu(self, surface, font):
+    def draw_menu(self, surface: pygame.Surface, font: pygame.font.Font) -> None:
+        """Render the achievements menu surface."""
         surface.fill((20, 20, 25))
         title = font.render("ACHIEVEMENTS", True, (255, 215, 0))
         surface.blit(title, (20, 20))
