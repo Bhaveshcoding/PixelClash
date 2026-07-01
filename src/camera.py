@@ -51,4 +51,4 @@ class Camera:
     def set_zoom(self, zoom: float) -> None:
         """Set the zoom value for the camera."""
         self.zoom = zoom
-        
+            
